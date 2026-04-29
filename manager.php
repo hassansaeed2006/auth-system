@@ -1,3 +1,12 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/Auth.php';
+$guard = $auth->requireAuthentication('manager');
+if (isset($guard['error'])) {
+    header('Location: dashboard.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -40,20 +49,15 @@
         async function loadManagerDashboard() {
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             
-            if (!user.id || (user.role !== 'admin' && user.role !== 'manager')) {
+            if (!user.id || user.role !== 'manager') {
                 window.location.href = 'dashboard.php';
                 return;
-            }
-            
-            // Show admin link if user is admin
-            if (user.role === 'admin') {
-                document.getElementById('adminLink').style.display = 'block';
             }
             
             const content = document.getElementById('managerContent');
             
             try {
-                const response = await fetch('api/manager-users.php');
+                const response = await authFetch('api/manager-users.php');
                 const data = await response.json();
                 
                 if (data.users && data.users.length > 0) {

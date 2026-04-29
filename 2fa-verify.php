@@ -1,3 +1,10 @@
+<?php
+require_once __DIR__ . '/config.php';
+if (empty($_SESSION['2fa_pending']) || empty($_SESSION['2fa_user_id'])) {
+    header('Location: login.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>

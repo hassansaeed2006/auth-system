@@ -1,12 +1,13 @@
 <?php
-require_once __DIR__ . '/../../config.php';
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../includes/Auth.php';
 
 header('Content-Type: application/json');
 
 // Check if user is admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(403);
-    echo json_encode(['error' => 'Access denied']);
+$guard = $auth->requireAuthentication('admin');
+if (isset($guard['error'])) {
+    echo json_encode($guard);
     exit;
 }
 

@@ -1,3 +1,12 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/Auth.php';
+$guard = $auth->requireAuthentication();
+if (isset($guard['error'])) {
+    header('Location: login.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +20,9 @@
         <div class="container">
             <div class="navbar-brand">Auth System</div>
             <div class="navbar-menu">
+                <div class="navbar-item">
+                    <a href="user.php" class="navbar-link">User</a>
+                </div>
                 <div class="navbar-item">
                     <a href="profile.php" class="navbar-link">Profile</a>
                 </div>
@@ -55,7 +67,6 @@
             // Show role-specific navigation
             if (user.role === 'admin') {
                 document.getElementById('adminNav').style.display = 'block';
-                document.getElementById('managerNav').style.display = 'block';
             } else if (user.role === 'manager') {
                 document.getElementById('managerNav').style.display = 'block';
             }
@@ -105,6 +116,11 @@
             } else {
                 content.innerHTML = `
                     <div class="dashboard-grid">
+                        <div class="dashboard-card">
+                            <h3>User Page</h3>
+                            <p>Access your user-only route</p>
+                            <a href="user.php" class="btn btn-primary">Go to User Page</a>
+                        </div>
                         <div class="dashboard-card">
                             <h3>Profile</h3>
                             <p>View and edit your profile</p>

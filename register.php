@@ -22,6 +22,22 @@
         <div class="auth-card">
             <h2>Register</h2>
             <div id="alert" class="alert" style="display: none;"></div>
+            <div id="registration2faSection" class="setup-2fa-section" style="display: none;">
+                <h3>Complete 2FA Setup</h3>
+                <p>Scan the QR code in Google Authenticator, Microsoft Authenticator, or Authy.</p>
+                <div id="registerQrCodeContainer" class="qr-container"></div>
+                <div class="form-group">
+                    <label for="registerSecretKey">Secret Key (backup):</label>
+                    <code id="registerSecretKey"></code>
+                </div>
+                <form id="registerVerify2faForm" onsubmit="handleRegistrationVerify2FA(event)">
+                    <div class="form-group">
+                        <label for="registerTwoFACode">Enter 6-digit code</label>
+                        <input type="text" id="registerTwoFACode" maxlength="6" pattern="[0-9]{6}" required>
+                    </div>
+                    <button type="submit" class="btn btn-success btn-block">Verify 2FA and Finish</button>
+                </form>
+            </div>
             
             <form id="registerForm" onsubmit="handleRegister(event)">
                 <div class="form-group">
@@ -98,12 +114,54 @@
                     showAlert(alertEl, data.error, 'error');
                 } else if (data.success) {
                     showAlert(alertEl, data.success, 'success');
-                    setTimeout(() => {
-                        window.location.href = 'login.php';
-                    }, 2000);
+
+                    if (data.two_fa_setup && data.user_id) {
+                        sessionStorage.setItem('register_2fa_user_id', String(data.user_id));
+                        document.getElementById('registerSecretKey').textContent = data.two_fa_setup.secret;
+                        document.getElementById('registerQrCodeContainer').innerHTML = `<img src="${data.two_fa_setup.qr_code}" alt="Registration 2FA QR Code">`;
+                        document.getElementById('registerForm').style.display = 'none';
+                        document.getElementById('registration2faSection').style.display = 'block';
+                        return;
+                    }
+
+                    setTimeout(() => { window.location.href = 'login.php'; }, 1500);
                 }
             } catch (error) {
                 showAlert(alertEl, 'Registration failed', 'error');
+            }
+        }
+
+        document.getElementById('registerTwoFACode').addEventListener('input', function (e) {
+            e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+        });
+
+        async function handleRegistrationVerify2FA(event) {
+            event.preventDefault();
+            const code = document.getElementById('registerTwoFACode').value;
+            const userId = parseInt(sessionStorage.getItem('register_2fa_user_id') || '0', 10);
+            const alertEl = document.getElementById('alert');
+
+            if (!userId || code.length !== 6) {
+                showAlert(alertEl, 'Invalid 2FA setup state. Please register again.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('api.php?action=verify2fa-registration', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, code: parseInt(code, 10) })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    showAlert(alertEl, data.error, 'error');
+                } else {
+                    sessionStorage.removeItem('register_2fa_user_id');
+                    showAlert(alertEl, data.success || '2FA configured successfully. You can now login.', 'success');
+                    setTimeout(() => { window.location.href = 'login.php'; }, 1500);
+                }
+            } catch (error) {
+                showAlert(alertEl, 'Could not verify registration 2FA', 'error');
             }
         }
     </script>

@@ -1,8 +1,11 @@
 <?php
-require_once 'config.php';
+require_once __DIR__ . '/../config.php';
 
 class Auth {
     private $conn;
+    private const ROLE_ADMIN = 'admin';
+    private const ROLE_MANAGER = 'manager';
+    private const ROLE_USER = 'user';
     
     public function __construct($conn) {
         $this->conn = $conn;
@@ -63,7 +66,7 @@ class Auth {
             return ['error' => 'All fields are required'];
         }
         
-        if ($role !== 'admin' && $role !== 'manager' && $role !== 'user') {
+        if (!in_array($role, [self::ROLE_ADMIN, self::ROLE_MANAGER, self::ROLE_USER], true)) {
             return ['error' => 'Invalid role'];
         }
         
@@ -81,13 +84,22 @@ class Auth {
         // Hash password
         $password_hash = $this->hashPassword($password);
         
+        // Generate 2FA secret during registration (required by flow)
+        $secret = $this->generateSecret();
+
         // Insert user
-        $stmt = $this->conn->prepare("INSERT INTO users (name, email, username, password_hash, role) VALUES (?, ?, ?, ?, ?)");
-        $stmt->bind_param("sssss", $name, $email, $username, $password_hash, $role);
+        $stmt = $this->conn->prepare("INSERT INTO users (name, email, username, password_hash, role, two_fa_secret, two_fa_enabled) VALUES (?, ?, ?, ?, ?, ?, 0)");
+        $stmt->bind_param("ssssss", $name, $email, $username, $password_hash, $role, $secret);
         
         if ($stmt->execute()) {
             $stmt->close();
-            return ['success' => 'User registered successfully', 'user_id' => $this->conn->insert_id];
+            $user_id = $this->conn->insert_id;
+            $setupData = $this->create2FASetupData($user_id, $secret);
+            return [
+                'success' => 'User registered successfully. Complete 2FA setup before first login.',
+                'user_id' => $user_id,
+                'two_fa_setup' => $setupData
+            ];
         } else {
             return ['error' => 'Registration failed'];
         }
@@ -117,19 +129,18 @@ class Auth {
             return ['error' => 'Invalid credentials'];
         }
         
-        // Check if 2FA is enabled
-        if ($user['two_fa_enabled']) {
+        // Require 2FA for every login
+        if (!empty($user['two_fa_secret'])) {
             $_SESSION['2fa_user_id'] = $user['id'];
             $_SESSION['2fa_email'] = $user['email'];
             $_SESSION['2fa_pending'] = true;
+            unset($_SESSION['user_id'], $_SESSION['token'], $_SESSION['role']);
             return ['2fa_required' => true, 'user_id' => $user['id']];
         }
         
         // Generate token
         $token = $this->generateToken($user['id'], $user['email'], $user['role']);
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['token'] = $token;
-        $_SESSION['role'] = $user['role'];
+        $this->establishSessionAndCookie($user['id'], $user['role'], $token);
         
         return [
             'success' => 'Login successful',
@@ -138,6 +149,7 @@ class Auth {
                 'id' => $user['id'],
                 'name' => $user['name'],
                 'email' => $user['email'],
+                'username' => $user['username'],
                 'role' => $user['role']
             ]
         ];
@@ -145,31 +157,28 @@ class Auth {
     
     // Setup 2FA
     public function setup2FA($user_id) {
-        require_once 'includes/phpqrcode/qrlib.php';
-        
-        $secret = $this->generateSecret();
-        
-        // Save secret to database
-        $stmt = $this->conn->prepare("UPDATE users SET two_fa_secret = ? WHERE id = ?");
-        $stmt->bind_param("si", $secret, $user_id);
-        $stmt->execute();
-        $stmt->close();
-        
-        // Generate QR code
-        $qr_filename = 'qrcodes/' . uniqid() . '.png';
-        if (!is_dir('qrcodes')) {
-            mkdir('qrcodes', 0755, true);
-        }
-        
         $user = $this->getUserById($user_id);
-        $provisioning_uri = "otpauth://totp/Auth System:{$user['email']}?secret=$secret&issuer=Auth System";
-        
-        QRcode::png($provisioning_uri, $qr_filename, QR_ECLEVEL_L, 4);
-        
-        return [
-            'secret' => $secret,
-            'qr_code' => $qr_filename
-        ];
+        if (!$user) {
+            return ['error' => 'User not found'];
+        }
+
+        $stmt = $this->conn->prepare("SELECT two_fa_secret FROM users WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        $secret = $row['two_fa_secret'] ?: $this->generateSecret();
+
+        if (empty($row['two_fa_secret'])) {
+            $updateStmt = $this->conn->prepare("UPDATE users SET two_fa_secret = ? WHERE id = ?");
+            $updateStmt->bind_param("si", $secret, $user_id);
+            $updateStmt->execute();
+            $updateStmt->close();
+        }
+
+        return $this->create2FASetupData($user_id, $secret);
     }
     
     // Verify 2FA code
@@ -201,10 +210,9 @@ class Auth {
             
             $user_data = $this->getUserById($user_id);
             $token = $this->generateToken($user_data['id'], $user_data['email'], $user_data['role']);
-            $_SESSION['user_id'] = $user_data['id'];
-            $_SESSION['token'] = $token;
-            $_SESSION['role'] = $user_data['role'];
+            $this->establishSessionAndCookie($user_data['id'], $user_data['role'], $token);
             unset($_SESSION['2fa_pending']);
+            unset($_SESSION['2fa_user_id'], $_SESSION['2fa_email']);
             
             return [
                 'success' => '2FA verified',
@@ -285,32 +293,116 @@ class Auth {
     
     // Check if user is authenticated
     public function isAuthenticated() {
-        return isset($_SESSION['user_id']) && isset($_SESSION['token']);
+        return $this->getAuthenticatedUserFromRequest() !== null;
     }
     
     // Check role
     public function hasRole($required_role) {
-        if (!isset($_SESSION['role'])) {
+        $authUser = $this->getAuthenticatedUserFromRequest();
+        if (!$authUser || !isset($authUser['role'])) {
             return false;
         }
-        
-        $user_role = $_SESSION['role'];
-        
-        if ($required_role === 'admin') {
-            return $user_role === 'admin';
-        } elseif ($required_role === 'manager') {
-            return $user_role === 'admin' || $user_role === 'manager';
-        } elseif ($required_role === 'user') {
-            return true;
-        }
-        
-        return false;
+
+        $user_role = $authUser['role'];
+        return $required_role === $user_role;
     }
     
     // Logout
     public function logout() {
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], (bool)$params['secure'], (bool)$params['httponly']);
+        }
+        setcookie('auth_token', '', time() - 3600, '/', '', false, true);
         session_destroy();
         return ['success' => 'Logged out successfully'];
+    }
+
+    public function getAuthenticatedUserFromRequest() {
+        $token = $this->extractTokenFromRequest();
+        if (!$token && isset($_SESSION['token'])) {
+            $token = $_SESSION['token'];
+        }
+        if (!$token) {
+            return null;
+        }
+
+        $payload = $this->verifyToken($token);
+        if (!$payload || !isset($payload['user_id'])) {
+            return null;
+        }
+
+        $user = $this->getUserById((int)$payload['user_id']);
+        if (!$user || $user['email'] !== ($payload['email'] ?? null) || $user['role'] !== ($payload['role'] ?? null)) {
+            return null;
+        }
+
+        return $user;
+    }
+
+    public function requireAuthentication($requiredRole = null) {
+        $user = $this->getAuthenticatedUserFromRequest();
+        if (!$user) {
+            http_response_code(401);
+            return ['error' => 'Authentication required'];
+        }
+
+        if ($requiredRole && !$this->hasRole($requiredRole)) {
+            http_response_code(403);
+            return ['error' => 'Access denied'];
+        }
+
+        return ['user' => $user];
+    }
+
+    private function establishSessionAndCookie($userId, $role, $token) {
+        $_SESSION['user_id'] = $userId;
+        $_SESSION['token'] = $token;
+        $_SESSION['role'] = $role;
+        setcookie('auth_token', $token, [
+            'expires' => time() + (24 * 60 * 60),
+            'path' => '/',
+            'secure' => false,
+            'httponly' => true,
+            'samesite' => 'Lax'
+        ]);
+    }
+
+    private function extractTokenFromRequest() {
+        if (!empty($_SERVER['HTTP_AUTHORIZATION']) && preg_match('/Bearer\s+(.+)/i', $_SERVER['HTTP_AUTHORIZATION'], $matches)) {
+            return trim($matches[1]);
+        }
+
+        if (!empty($_COOKIE['auth_token'])) {
+            return $_COOKIE['auth_token'];
+        }
+
+        return null;
+    }
+
+    private function create2FASetupData($user_id, $secret) {
+        require_once __DIR__ . '/phpqrcode/qrlib.php';
+
+        $qrDir = __DIR__ . '/../qrcodes';
+        if (!is_dir($qrDir)) {
+            mkdir($qrDir, 0755, true);
+        }
+
+        $qrFilename = uniqid('qr_', true) . '.png';
+        $qrAbsolutePath = $qrDir . DIRECTORY_SEPARATOR . $qrFilename;
+        $qrRelativePath = 'qrcodes/' . $qrFilename;
+
+        $user = $this->getUserById($user_id);
+        $email = rawurlencode($user['email']);
+        $issuer = rawurlencode('Auth System');
+        $provisioning_uri = "otpauth://totp/Auth%20System:{$email}?secret={$secret}&issuer={$issuer}";
+
+        QRcode::png($provisioning_uri, $qrAbsolutePath, QR_ECLEVEL_L, 4);
+
+        return [
+            'secret' => $secret,
+            'qr_code' => $qrRelativePath
+        ];
     }
 }
 

@@ -1,3 +1,12 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/Auth.php';
+$guard = $auth->requireAuthentication('admin');
+if (isset($guard['error'])) {
+    header('Location: dashboard.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,7 +55,7 @@
             
             // Fetch admin statistics from database
             try {
-                const response = await fetch('api/admin-stats.php');
+                const response = await authFetch('api/admin-stats.php');
                 const stats = await response.json();
                 
                 content.innerHTML = `
@@ -92,7 +101,7 @@
 
         async function loadUsersList() {
             try {
-                const response = await fetch('api/users-list.php');
+                const response = await authFetch('api/users-list.php');
                 const data = await response.json();
                 
                 if (data.users && data.users.length > 0) {

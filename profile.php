@@ -1,3 +1,12 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/Auth.php';
+$guard = $auth->requireAuthentication();
+if (isset($guard['error'])) {
+    header('Location: login.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -63,13 +72,29 @@
     <script src="assets/js/main.js"></script>
     <script>
         async function loadProfile() {
-            const user = JSON.parse(localStorage.getItem('user') || '{}');
-            
+            let user = JSON.parse(localStorage.getItem('user') || '{}');
+
             if (!user.id) {
                 window.location.href = 'login.php';
                 return;
             }
-            
+
+            // Always sync profile data from backend so 2FA status is accurate.
+            try {
+                const authResponse = await authFetch('api.php?action=verify-auth');
+                const authData = await authResponse.json();
+                if (authData.is_authenticated && authData.user) {
+                    user = authData.user;
+                    localStorage.setItem('user', JSON.stringify(user));
+                }
+            } catch (error) {
+                // authFetch handles 401 redirect; keep local user fallback for non-auth errors.
+            }
+
+            const is2FAEnabled = Number(user.two_fa_enabled) === 1 || user.two_fa_enabled === true;
+            const twoFALabel = is2FAEnabled ? 'Enabled' : 'Disabled';
+            const twoFAClass = is2FAEnabled ? 'badge-success' : 'badge-warning';
+
             const content = document.getElementById('profileContent');
             content.innerHTML = `
                 <div class="profile-info">
@@ -91,17 +116,20 @@
                     </div>
                     <div class="info-row">
                         <label>2FA Status:</label>
-                        <span id="twoFAStatus" class="badge badge-warning">Disabled</span>
+                        <span id="twoFAStatus" class="badge ${twoFAClass}">${twoFALabel}</span>
                     </div>
                 </div>
                 
-                <button id="setup2faBtn" class="btn btn-primary" onclick="showSetup2FA()">Setup 2FA</button>
+                ${is2FAEnabled
+                    ? '<button id="setup2faBtn" class="btn btn-secondary" disabled>2FA Already Enabled</button>'
+                    : '<button id="setup2faBtn" class="btn btn-primary" onclick="showSetup2FA()">Setup 2FA</button>'
+                }
             `;
         }
 
         async function showSetup2FA() {
             try {
-                const response = await fetch('api.php?action=setup2fa');
+                const response = await authFetch('api.php?action=setup2fa');
                 const data = await response.json();
                 
                 if (data.error) {
@@ -133,7 +161,7 @@
             }
             
             try {
-                const response = await fetch('api.php?action=verify2fa', {
+                const response = await authFetch('api.php?action=verify2fa', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

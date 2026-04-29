@@ -15,6 +15,29 @@ function checkAuth() {
     }
 }
 
+function getAuthHeaders(extraHeaders = {}) {
+    const token = localStorage.getItem('token');
+    const headers = { ...extraHeaders };
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+}
+
+async function authFetch(url, options = {}) {
+    const headers = getAuthHeaders(options.headers || {});
+    const response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = 'login.php';
+        throw new Error('Authentication required');
+    }
+
+    return response;
+}
+
 // Show alert
 function showAlert(element, message, type = 'info') {
     element.textContent = message;
@@ -31,7 +54,7 @@ function showAlert(element, message, type = 'info') {
 // Logout
 async function logout() {
     try {
-        await fetch('api.php?action=logout', { method: 'POST' });
+        await authFetch('api.php?action=logout', { method: 'POST' });
     } catch (error) {
         console.error('Logout error:', error);
     }
