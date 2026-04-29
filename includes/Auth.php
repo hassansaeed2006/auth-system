@@ -1,22 +1,27 @@
 <?php
+// Authentication Class
+// Handles user authentication, registration, JWT tokens, and 2FA functionality
+
 require_once __DIR__ . '/../config.php';
 
+// Auth class for managing user authentication and security
 class Auth {
-    private $conn;
-    private const ROLE_ADMIN = 'admin';
-    private const ROLE_MANAGER = 'manager';
-    private const ROLE_USER = 'user';
+    private $conn; // Database connection
+    private const ROLE_ADMIN = 'admin'; // Administrator role
+    private const ROLE_MANAGER = 'manager'; // Manager role
+    private const ROLE_USER = 'user'; // Regular user role
     
+    // Constructor - initializes with database connection
     public function __construct($conn) {
         $this->conn = $conn;
     }
     
-    // Hash password using bcrypt
+    // Hash password using bcrypt for secure storage
     public function hashPassword($password) {
         return password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
     }
     
-    // Verify password
+    // Verify password against stored hash
     public function verifyPassword($password, $hash) {
         return password_verify($password, $hash);
     }
@@ -61,7 +66,7 @@ class Auth {
     
     // Register user
     public function register($name, $email, $username, $password, $role = 'user') {
-        // Validate input
+        // Validate input fields
         if (empty($name) || empty($email) || empty($username) || empty($password)) {
             return ['error' => 'All fields are required'];
         }
@@ -403,6 +408,50 @@ class Auth {
             'secret' => $secret,
             'qr_code' => $qrRelativePath
         ];
+    }
+
+    // Change user password
+    public function changePassword($user_id, $current_password, $new_password) {
+        // Validate input parameters
+        if (empty($current_password) || empty($new_password)) {
+            return ['error' => 'Current password and new password are required'];
+        }
+
+        if (strlen($new_password) < 8) {
+            return ['error' => 'New password must be at least 8 characters long'];
+        }
+
+        // Get user from database
+        $stmt = $this->conn->prepare("SELECT password_hash FROM users WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result->num_rows === 0) {
+            return ['error' => 'User not found'];
+        }
+
+        $user = $result->fetch_assoc();
+        $stmt->close();
+
+        // Verify current password is correct
+        if (!$this->verifyPassword($current_password, $user['password_hash'])) {
+            return ['error' => 'Current password is incorrect'];
+        }
+
+        // Hash new password
+        $new_password_hash = $this->hashPassword($new_password);
+
+        // Update password in database
+        $stmt = $this->conn->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+        $stmt->bind_param("si", $new_password_hash, $user_id);
+
+        if ($stmt->execute()) {
+            $stmt->close();
+            return ['success' => 'Password changed successfully'];
+        } else {
+            return ['error' => 'Failed to change password'];
+        }
     }
 }
 

@@ -1,6 +1,11 @@
 <?php
+// Profile Page
+// Displays user profile information and allows 2FA setup and password changes
+
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/includes/Auth.php';
+
+// Require authentication to access profile page
 $guard = $auth->requireAuthentication();
 if (isset($guard['error'])) {
     header('Location: login.php');
@@ -71,6 +76,7 @@ if (isset($guard['error'])) {
 
     <script src="assets/js/main.js"></script>
     <script>
+        // Load and display user profile information
         async function loadProfile() {
             let user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -118,6 +124,41 @@ if (isset($guard['error'])) {
                         <label>2FA Status:</label>
                         <span id="twoFAStatus" class="badge ${twoFAClass}">${twoFALabel}</span>
                     </div>
+                </div>
+                
+                <div class="change-password-section">
+                    <h3>Change Password</h3>
+                    <form id="changePasswordForm" onsubmit="handleChangePassword(event)">
+                        <div class="form-group">
+                            <label for="currentPassword">Current Password:</label>
+                            <input 
+                                type="password" 
+                                id="currentPassword" 
+                                name="currentPassword" 
+                                required
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="newPassword">New Password:</label>
+                            <input 
+                                type="password" 
+                                id="newPassword" 
+                                name="newPassword" 
+                                minlength="8"
+                                required
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmPassword">Confirm New Password:</label>
+                            <input 
+                                type="password" 
+                                id="confirmPassword" 
+                                name="confirmPassword" 
+                                required
+                            >
+                        </div>
+                        <button type="submit" class="btn btn-primary">Change Password</button>
+                    </form>
                 </div>
                 
                 ${is2FAEnabled
@@ -181,6 +222,52 @@ if (isset($guard['error'])) {
                 }
             } catch (error) {
                 showAlert(alertEl, 'Failed to enable 2FA', 'error');
+            }
+        }
+
+        async function handleChangePassword(event) {
+            // Prevent form submission
+            event.preventDefault();
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const alertEl = document.getElementById('alert');
+            
+            // Validate passwords match
+            if (newPassword !== confirmPassword) {
+                showAlert(alertEl, 'New passwords do not match', 'error');
+                return;
+            }
+            
+            // Validate password length
+            if (newPassword.length < 8) {
+                showAlert(alertEl, 'New password must be at least 8 characters long', 'error');
+                return;
+            }
+            
+            try {
+                // Send change password request to API
+                const response = await authFetch('api.php?action=change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        current_password: currentPassword,
+                        new_password: newPassword 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showAlert(alertEl, data.error, 'error');
+                } else if (data.success) {
+                    showAlert(alertEl, data.success, 'success');
+                    document.getElementById('changePasswordForm').reset();
+                }
+            } catch (error) {
+                showAlert(alertEl, 'Failed to change password', 'error');
             }
         }
 

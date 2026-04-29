@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- Registration Page -->
+<!-- Allows new users to create an account with 2FA setup -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
