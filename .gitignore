@@ -1,0 +1,10 @@
+*.log
+.DS_Store
+.vscode/
+.idea/
+qrcodes/
+*.swp
+*.swo
+*~
+.env.local
+.env
