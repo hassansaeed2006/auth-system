@@ -1,6 +1,4 @@
 <!DOCTYPE html>
-<!-- Login Page -->
-<!-- Allows users to authenticate with email/username and password -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -45,7 +43,6 @@
 
     <script src="assets/js/main.js"></script>
     <script>
-        // Handle login form submission
         async function handleLogin(event) {
             event.preventDefault();
             
